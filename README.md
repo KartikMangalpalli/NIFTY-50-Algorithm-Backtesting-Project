@@ -142,3 +142,60 @@ All strategies underperform buy-and-hold in CAGR because they are selective long
 - No data leakage: regime thresholds and model selection use only the training/validation periods.
 - No hardcoded results: all metrics are computed live from actual backtesting.
 - Limitations are documented in the conclusion section of each notebook.
+
+---
+
+## Module API Reference (for Web Development)
+
+The four modules below are designed to be imported independently by a future backend. Each module has no cross-dependencies except `data_loader` → `indicators` → `backtester` → `performance`.
+
+### `modules/data_loader.py`
+
+| Function | Input | Output | Description |
+|---|---|---|---|
+| `load_data(filepath=None)` | `str` or `Path` (optional) | `pd.DataFrame` | Loads the Excel dataset, validates OHLCV integrity, adds derived columns (PREV_CLOSE, DAILY_RETURN, LOG_RETURN, TRUE_RANGE, NEXT_OPEN). Index = DatetimeIndex. |
+| `split_data(df, train_end, val_end)` | `pd.DataFrame`, two date strings | `(train, val, test)` tuple of DataFrames | Chronological train/val/test split. No shuffling. |
+| `normalise_prices(df, base_col)` | `pd.DataFrame`, column name | `pd.Series` | Rebase prices to 1.0 on first observation. |
+| `describe_dataset(df)` | `pd.DataFrame` | prints summary | Human-readable dataset summary. |
+
+### `modules/indicators.py`
+
+All functions take `pd.Series` and return `pd.Series` or `pd.DataFrame`, aligned on the same index. No look-ahead — all use `min_periods=period` so NaN propagates during warm-up.
+
+| Function | Input | Output | Description |
+|---|---|---|---|
+| `sma(series, period)` | close, int | `pd.Series` | Simple Moving Average |
+| `ema(series, period)` | close, int | `pd.Series` | Exponential Moving Average |
+| `rsi(series, period=14)` | close, int | `pd.Series` | Wilder RSI (0–100) |
+| `macd(series, fast, slow, signal)` | close, 3 ints | `pd.DataFrame` | MACD line, signal line, histogram |
+| `bollinger_bands(series, period, n_std)` | close, int, float | `pd.DataFrame` | middle, upper, lower, bandwidth, percent_b |
+| `atr(high, low, close, period)` | 3 Series, int | `pd.Series` | Average True Range (Wilder) |
+| `adx(high, low, close, period)` | 3 Series, int | `pd.DataFrame` | ADX, +DI, −DI |
+| `donchian_channel(high, low, period)` | 2 Series, int | `pd.DataFrame` | upper, lower, middle |
+| `zscore(series, period)` | close, int | `pd.Series` | Rolling z-score |
+| `roc(series, period)` | close, int | `pd.Series` | Rate of Change |
+| `historical_volatility(series, period=21)` | close, int | `pd.Series` | Annualised rolling std of log returns |
+
+### `modules/backtester.py`
+
+| Function / Class | Input | Output | Description |
+|---|---|---|---|
+| `Backtester(df, initial_capital, cost_bps, allow_short)` | DataFrame, float, float, bool | `Backtester` instance | Single-asset event-driven backtester. Executes signals at next-day open. |
+| `bt.run(signal, params=None)` | `pd.Series` (1=long, 0=flat) | `BacktestResult` | Runs full backtest. Returns signal, position, equity curve, daily returns, trade log, and 20+ metrics dict. |
+| `compute_metrics(returns, portfolio_val, initial_capital, risk_free_rate, benchmark_close)` | 2 Series, float, float, Series | `dict` | Standalone metrics: CAGR, Sharpe, Sortino, Calmar, max drawdown, win rate, VaR, CVaR, alpha, beta, info ratio. |
+| `benchmark_metrics(df, initial_capital, risk_free_rate)` | DataFrame, float, float | `dict` | Buy-and-hold benchmark metrics. |
+
+**`BacktestResult` fields:** `signal`, `position`, `exec_price`, `portfolio_val`, `returns`, `trade_log`, `params`, `metrics`.
+
+### `modules/performance.py`
+
+All plotting functions return a `matplotlib.figure.Figure` for inline display or saving to disk.
+
+| Function | Input | Output | Description |
+|---|---|---|---|
+| `plot_equity_and_drawdown(strategy_equity, strategy_returns, benchmark_equity, ...)` | 2–3 Series | `Figure` | Two-panel: equity curve + drawdown |
+| `plot_rolling_sharpe(returns, window, risk_free_rate, ...)` | Series, int, float | `Figure` | Rolling 1-year Sharpe ratio |
+| `plot_monthly_returns_heatmap(returns, ...)` | Series | `Figure` | Year × month heatmap |
+| `plot_return_distribution(returns, benchmark_returns, ...)` | 1–2 Series | `Figure` | Histogram with normal overlay |
+| `print_metrics_table(metrics, title, benchmark_metrics)` | dict, str, dict | prints | Formatted comparison table |
+| `metrics_to_dataframe(metrics_dict, benchmark_dict, strategy_name)` | 1–2 dicts, str | `pd.DataFrame` | Styled DataFrame for Jupyter display |

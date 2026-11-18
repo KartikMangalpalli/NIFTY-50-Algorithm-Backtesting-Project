@@ -159,8 +159,11 @@ class Backtester:
         portfolio_val = self.initial_capital * (1 + strategy_ret).cumprod()
         portfolio_val.iloc[0] = self.initial_capital  # anchor
 
-        # Build trade log
-        trade_log = self._build_trade_log(sig, exec_price, self.df["CLOSE"])
+        # Build trade log — use *position* (not signal) so entry/exit dates
+        # match the actual execution model:
+        #   Entry  = first day position=1,  price = OPEN of that day
+        #   Exit   = last day position=1,  price = CLOSE of that day
+        trade_log = self._build_trade_log(position, open_, close)
 
         # Assemble result
         result = BacktestResult(
@@ -181,29 +184,35 @@ class Backtester:
     # ------------------------------------------------------------------
     def _build_trade_log(
         self,
-        signal: pd.Series,
-        exec_price: pd.Series,
+        position: pd.Series,
+        open_: pd.Series,
         close: pd.Series,
     ) -> pd.DataFrame:
-        """Build a DataFrame with one row per completed long trade."""
+        """Build a DataFrame with one row per completed long trade.
+
+        Iterates over the *position* series (signal shifted by 1 day),
+        so entry/exit dates match the actual execution model:
+          - Entry price = OPEN of the first day position == 1
+          - Exit  price = CLOSE of the last  day position == 1
+        """
         trades = []
-        in_trade = False
+        in_trade   = False
         entry_date = None
         entry_price = None
 
-        for date, sig in signal.items():
-            if not in_trade and sig == 1:
+        for date, pos in position.items():
+            if not in_trade and pos == 1:
                 in_trade    = True
                 entry_date  = date
-                # Actual entry price = OPEN of *next* day, stored in NEXT_OPEN of this row
-                # But we have exec_price aligned as OPEN[t], so after shift(1) the entry
-                # day is the first day we're IN position.
-                entry_price = exec_price.get(date, np.nan)
+                entry_price = open_.get(date, np.nan)
 
-            elif in_trade and sig != 1:
-                in_trade = False
-                exit_date  = date
-                exit_price = exec_price.get(date, np.nan)
+            elif in_trade and pos != 1:
+                # We just left the trade — the last held day was the
+                # previous index entry (the day before `date`).
+                in_trade  = False
+                last_held = position.index[position.index.get_loc(date) - 1]
+                exit_date  = last_held
+                exit_price = close.get(last_held, np.nan)
                 if entry_price and exit_price and entry_price > 0:
                     ret = exit_price / entry_price - 1
                     trades.append({
@@ -265,8 +274,8 @@ def compute_metrics(
     sharpe        = (rets.mean() - daily_rf) / rets.std(ddof=1) * np.sqrt(252) if rets.std() else 0
 
     downside = rets[rets < daily_rf] - daily_rf
-    sortino_denom = np.sqrt((downside ** 2).mean()) * np.sqrt(252) if len(downside) else 0
-    sortino = (rets.mean() - daily_rf) / sortino_denom * np.sqrt(252) if sortino_denom else 0
+    downside_dev = np.sqrt((downside ** 2).mean()) if len(downside) else 0
+    sortino = (rets.mean() - daily_rf) / downside_dev * np.sqrt(252) if downside_dev else 0
 
     # ---- Drawdown metrics ----------------------------------------------
     cum_ret  = (1 + rets).cumprod()
